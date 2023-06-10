@@ -11,9 +11,11 @@
 'use strict';
 
 import type {PlatformConfig} from '../AnimatedPlatformConfig';
+import type AnimatedNode from '../nodes/AnimatedNode';
 import type AnimatedValue from '../nodes/AnimatedValue';
 
 import NativeAnimatedHelper from '../NativeAnimatedHelper';
+import AnimatedProps from '../nodes/AnimatedProps';
 
 export type EndResult = {finished: boolean, ...};
 export type EndCallback = (result: EndResult) => void;
@@ -60,6 +62,22 @@ export default class Animation {
     this.__onEnd = null;
     onEnd && onEnd(result);
   }
+
+  __findAnimatedPropsNode(node: AnimatedNode): ?AnimatedProps {
+    if (node instanceof AnimatedProps) {
+      return node;
+    }
+
+    for (const child of node.__getChildren()) {
+      const result = this.__findAnimatedPropsNode(child);
+      if (result) {
+        return result;
+      }
+    }
+
+    return null;
+  }
+
   __startNativeAnimation(animatedValue: AnimatedValue): void {
     const startNativeAnimationWaitId = `${startNativeAnimationNextId}:startAnimation`;
     startNativeAnimationNextId += 1;
@@ -74,8 +92,21 @@ export default class Animation {
         this.__nativeId,
         animatedValue.__getNativeTag(),
         config,
-        // $FlowFixMe[method-unbinding] added when improving typing for this parameters
-        this.__debouncedOnEnd.bind(this),
+        result => {
+          this.__debouncedOnEnd(result);
+
+          // When using natively driven animations, once the animation completes,
+          // we need to ensure that the JS side nodes are synced with the updated
+          // values.
+          const {value} = result;
+          if (value != null) {
+            animatedValue.__onAnimatedValueUpdateReceived(value);
+          }
+
+          // Once the JS side node is synced with the updated values, trigger an
+          // update on the AnimatedProps node to call any registered callbacks.
+          this.__findAnimatedPropsNode(animatedValue)?.update();
+        },
       );
     } catch (e) {
       throw e;
